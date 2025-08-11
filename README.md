@@ -1,1 +1,0 @@
-# epoxy-floor-demo
