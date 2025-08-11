@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Epoxy Garage Floor Visualizer</title>
+  <style>
+    body { font-family: Arial, sans-serif; max-width: 700px; margin: 40px auto; padding: 0 16px; color: #1f2937; }
+    h1 { margin-bottom: 6px; }
+    p.sub { color: #6b7280; margin-top: 0; }
+    label { display:block; font-weight:600; margin: 12px 0 6px; }
+    input[type="file"], textarea, button { width:100%; padding:12px; border-radius:10px; border:1px solid #d1d5db; }
+    textarea { min-height:90px; }
+    button { background:#0ea5e9; color:#fff; border:none; font-weight:700; cursor:pointer; margin-top:12px; }
+    button:disabled { opacity:.7; cursor:not-allowed; }
+    #status { margin-top:10px; color:#374151; font-size:14px; }
+    #result { margin-top:18px; display:none; }
+    #result img { max-width:100%; border-radius:12px; border:1px solid #e5e7eb; }
+  </style>
+</head>
+<body>
+  <h1>Epoxy Garage Floor Visualizer</h1>
+  <p class="sub">Upload a garage photo, describe your epoxy style, and get a mockup back.</p>
+
+  <form id="mockupForm">
+    <label>Garage Photo</label>
+    <input id="photo" type="file" accept="image/*" required />
+
+    <label>Colors / Pattern / Notes</label>
+    <textarea id="style" placeholder="e.g. red, black & white galaxy with metallic flakes" required></textarea>
+
+    <button id="goBtn" type="submit">Generate Mockup</button>
+    <div id="status"></div>
+  </form>
+
+  <div id="result">
+    <h3>Your Mockup</h3>
+    <img id="resultImg" alt="Mockup" />
+  </div>
+
+  <script>
+    // Your Cloudinary (already set)
+    const CLOUDINARY_UPLOAD_URL = "https://api.cloudinary.com/v1_1/dkn8ynrud/image/upload";
+    const CLOUDINARY_UPLOAD_PRESET = "epoxy_upload";
+
+    // Try production webhook first; if it 404s, auto-fallback to /webhook-test/
+    let WEBHOOK_URL = "https://mcooper21.app.n8n.cloud/webhook/garage-mockup";
+
+    const form = document.getElementById('mockupForm');
+    const statusEl = document.getElementById('status');
+    const goBtn = document.getElementById('goBtn');
+    const resultWrap = document.getElementById('result');
+    const resultImg = document.getElementById('resultImg');
+
+    function setStatus(msg){ statusEl.textContent = msg; }
+
+    async function uploadToCloudinary(file) {
+      const fd = new FormData();
+      fd.append('file', file);
+      fd.append('upload_preset', CLOUDINARY_UPLOAD_PRESET);
+      fd.append('folder', 'epoxy_demo');
+
+      const res = await fetch(CLOUDINARY_UPLOAD_URL, { method: 'POST', body: fd });
+      const json = await res.json();
+      if (!res.ok || !json.secure_url) {
+        throw new Error(json.error?.message || 'Cloudinary upload failed');
+      }
+      return json.secure_url;
+    }
+
+    async function sendToWebhook(payload) {
+      let res = await fetch(WEBHOOK_URL, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(payload)
+      });
+
+      if (res.status === 404 && WEBHOOK_URL.includes('/webhook/')) {
+        WEBHOOK_URL = WEBHOOK_URL.replace('/webhook/', '/webhook-test/');
+        res = await fetch(WEBHOOK_URL, {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify(payload)
+        });
+      }
+
+      if (!res.ok) throw new Error('Webhook returned ' + res.status);
+      return res.json();
+    }
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      setStatus('Uploading to Cloudinary...');
+      goBtn.disabled = true;
+      resultWrap.style.display = 'none';
+
+      const file = document.getElementById('photo').files[0];
+      const style = document.getElementById('style').value.trim();
+      if (!file || !style) { setStatus('Please add a photo and style.'); goBtn.disabled = false; return; }
+
+      try {
+        const photo_url = await uploadToCloudinary(file);
+        setStatus('Generating mockup (this can take a few seconds)...');
+        const data = await sendToWebhook({ photo_url, style });
+
+        if (data && data.image_url) {
+          resultImg.src = data.image_url;
+          resultWrap.style.display = 'block';
+          setStatus('Done!');
+        } else {
+          setStatus('Workflow finished but no image_url was returned.');
+        }
+      } catch (err) {
+        console.error(err);
+        setStatus(err.message || 'Something went wrong. Please try again.');
+      } finally {
+        goBtn.disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>
